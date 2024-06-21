@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard</title>
+    < <link rel="stylesheet" href="styles.css">  
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Menu</h2>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/logout">Logout</a>
+    </div>
+    <div class="main">
+        <div class="content">
+            <h1>Welcome, <%= user.name %></h1>
+            <div class="users">
+                <ul class="list-group" id="user-list">
+                    <% if (users.length > 0) { %>
+                        <% for (let i = 0; i < users.length; i++) { %>
+                            <li class="list-group-item user-list" data-user-id="<%= users[i]._id %>">
+                                <img src="<%= 'http://localhost:3000/' + users[i].image %>" alt="<%= users[i].name %>" width="50" class="rounded-circle" height="50">
+                                <%= users[i].name %>
+                                <% if(users[i].is_online) { %>
+                                    <sup class="online-status" id="<%= users[i]._id %>-status">Online</sup>
+                                <% } else { %>
+                                    <sup class="offline-status" id="<%= users[i]._id %>-status">Offline</sup>
+                                <% } %>
+                            </li>
+                        <% } %>
+                    <% } else { %>
+                        <li class="list-group-item">No users found</li>
+                    <% } %>
+                </ul>
+            </div>
+        </div>
+        <h3 class="start-header" id="start-header">Select a user to start chatting</h3>
+        <div class="chat-section" id="chat-section">
+            <div id="selected-user-info" class="selected-user-info"></div>
+            <div id="chat-container"></div>
+            <form action="" id="chat-form">
+                <input type="text" name="message" placeholder="Enter Message" id="message" required class="border">
+                <input type="submit" value="Send" class="btn btn-primary">
+            </form>
+        </div>
+        
+
+<script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
+<script>
+      // Socket.io connection setup
+    // Socket.io connection setup
+var senderId = '<%= user._id %>';
+var receiverId = null; // Declare receiverId globally
+
+var socket = io('/user-namespace', {
+    auth: {
+        token: '<%= user._id %>'
+    }
+});
+
+// Function to handle sending messages
+const sendMessage = async (message, receiverId) => {
+    try {
+        const response = await fetch('/save-chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                receiverId,
+                message,
+                senderId
+            })
+        });
+
+        // Check if the HTTP response is successful (status 200-299)
+        if (!response.ok) {
+            throw new Error('Failed to save chat message');
+        }
+
+        // Parse the JSON response from the server
+        const data = await response.json();
+        console.log('Response from server:', data); // Log the response from server
+        
+        // Emit a socket event to notify about the message
+        socket.emit('sendMessage', { message, receiverId, senderId });
+
+        // Check if the response indicates success
+        if (data.success) {
+            console.log('Message sent successfully:', message); // Log the sent message
+        } else {
+            console.error('Failed to send message:', data.error); // Log any specific error message from server
+        }
+
+        return data; // Return the parsed JSON response
+    } catch (error) {
+        console.error('Error sending message:', error); // Log any network or fetch-related errors
+        throw error; // Rethrow the error to propagate it further if needed
+    }
+};
+
+// Function to display received messages
+const displayMessage = (message) => {
+    const chatContainer = document.getElementById('chat-container');
+    const newMessageElement = document.createElement('div');
+    newMessageElement.className = 'otherUser-chat';
+    newMessageElement.innerHTML = `${message}`;
+    chatContainer.appendChild(newMessageElement);
+
+    // Optionally, scroll to the bottom of the chat container
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+};
+
+// Event listener when user clicks on a user from the list
+document.addEventListener('DOMContentLoaded', function () {
+    const userList = document.getElementById('user-list');
+    const chatSection = document.getElementById('chat-section');
+    const startHeader = document.getElementById('start-header');
+    const chatContainer = document.getElementById('chat-container');
+    const messageInput = document.getElementById('message');
+    const chatForm = document.getElementById('chat-form');
+    const selectedUserInfo = document.getElementById('selected-user-info');
+
+    userList.addEventListener('click', function (e) {
+        e.preventDefault(); // Prevent default link behavior
+        if (e.target && e.target.closest('.user-list')) {
+            chatSection.style.display = 'block';
+            startHeader.style.display = 'none';
+
+            const userElement = e.target.closest('.user-list');
+            receiverId = userElement.getAttribute('data-user-id');
+            const userName = userElement.querySelector('img').alt;
+            const userImage = userElement.querySelector('img').src;
+            const userStatus = userElement.querySelector('sup').textContent;
+
+            // Emit event to request old chats
+            socket.emit('existingChats', { senderId: senderId, receiverId: receiverId });
+
+            // Update selected user info
+            selectedUserInfo.innerHTML = `
+                <div class="selected-user-info">
+                    <img src="${userImage}" alt="${userName}" width="50" height="50" class="user-dp">
+                    <div class="user-details">
+                        <span class="user-name">${userName}</span>
+                        <span class="user-status ${userStatus === 'Online' ? 'online-status' : 'offline-status'}">${userStatus}</span>
+                    </div>
+                </div>
+            `;
+
+            chatForm.removeEventListener('submit', handleSubmit);
+            chatForm.addEventListener('submit', handleSubmit);
+        }
+    });
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const message = messageInput.value.trim();
+
+        if (message && receiverId) {
+            try {
+                const data = await sendMessage(message, receiverId);
+
+                if (data.success) {
+                    const newMessageElement = document.createElement('div');
+                    newMessageElement.className = 'currentUser-chat';
+                    newMessageElement.innerHTML = `${message}`;
+                    chatContainer.appendChild(newMessageElement);
+                    messageInput.value = '';
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                } else {
+                    console.error('Message could not be saved:', data.error);
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+            }
+        } else {
+            console.error('Invalid message or receiverId');
+        }
+    };
+
+    const displayMessage = (message) => {
+        const newMessageElement = document.createElement('div');
+        newMessageElement.className = 'otherUser-chat';
+        newMessageElement.innerHTML = `${message}`;
+        chatContainer.appendChild(newMessageElement);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    };
+
+    socket.on('getOnlineUser', function (data) {
+        const statusElement = document.getElementById(data.user_id + '-status');
+        if (data.is_online) {
+            statusElement.textContent = 'Online';
+            statusElement.classList.remove('offline-status');
+            statusElement.classList.add('online-status');
+        } else {
+            statusElement.textContent = 'Offline';
+            statusElement.classList.remove('online-status');
+            statusElement.classList.add('offline-status');
+        }
+    });
+
+    socket.on('newMessage', function (data) {
+        const receivedMessage = data.message;
+        if (data.receiverId === senderId && data.senderId === receiverId) {
+            displayMessage(receivedMessage);
+        }
+    });
+
+    socket.on('loadchats', function (chats) {
+        chatContainer.innerHTML = ''; // Clear the chat container
+        chats.forEach(chat => {
+            const newMessageElement = document.createElement('div');
+            newMessageElement.className = chat.senderId === senderId ? 'currentUser-chat' : 'otherUser-chat';
+            newMessageElement.innerHTML = `${chat.message}`;
+            chatContainer.appendChild(newMessageElement);
+        });
+        chatContainer.scrollTop = chatContainer.scrollHeight; // Scroll to the bottom
+    });
+});
+
+     
+</script>
